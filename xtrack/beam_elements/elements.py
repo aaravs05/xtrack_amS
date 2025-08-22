@@ -3580,3 +3580,92 @@ class ElectronCooler(BeamElement):
 class ThinSliceNotNeededError(Exception):
     pass
 
+# At the end of xtrack/beam_elements/elements.py
+
+class ElectrostaticBender(xt.BeamElement):
+    """An electrostatic bender element that applies a pre-calculated linear transport matrix."""
+    isthick = True
+
+    # This dictionary MUST exactly match the C struct in electrostatic_bender.h
+    _xofields = {
+        'r_matrix': xo.Float64[36],
+        'length': xo.Float64,
+    }
+
+    # This tells xtrack the name of the C struct to use
+    _c_name = 'ElectrostaticBenderData'
+
+    # This tells the compiler to include your C header file when building the kernel
+    _extra_c_sources = [
+        '#include "/mnt/d/folders/4_local_pc_stuff/python_code/xtrack_ams/xtrack/beam_elements/elements_src/electrostatic_bender.h"'
+    ]
+
+    # This is the initializer for the Python object
+    def __init__(self, length=0, angle_rad=0, particle_ref=None, **kwargs):
+        
+        # This part happens in Python when you create the element.
+        # We calculate the transport matrix here and store it in the C struct.
+        if '_xobject' not in kwargs:
+            if particle_ref is None:
+                raise ValueError("A reference particle (particle_ref) must be provided "
+                                 "to calculate the transport matrix.")
+
+            # Calculate radius from length and angle
+            if angle_rad != 0:
+                radius = length / abs(angle_rad)
+            else:
+                radius = 1e100 # Effectively infinite radius
+            self.radius = radius
+            # Get properties from the reference particle
+            beta0 = particle_ref.beta0[0]
+            gamma0 = particle_ref.gamma0[0]
+            
+            # --- Matrix Calculation (same as your Python class) ---
+            L = length
+            rho0 = radius
+            kx = (2 - beta0**2) / (rho0**2)
+            sqrt_kx = np.sqrt(kx)
+            cos_kL = np.cos(sqrt_kx * L)
+            sin_kL = np.sin(sqrt_kx * L)
+
+            R = np.zeros((6, 6))
+            R[0, 0] = cos_kL
+            R[0, 1] = sin_kL / sqrt_kx
+            R[0, 5] = (1 / rho0) * (1 - cos_kL) / (1 + beta0)
+            R[1, 0] = -sqrt_kx * sin_kL
+            R[1, 1] = cos_kL
+            R[1, 5] = (1 / rho0) * sin_kL * sqrt_kx / (1 + beta0)
+            R[2, 2] = 1
+            R[2, 3] = L
+            R[3, 3] = 1
+            R[4, 0] = -(1 / rho0) * sin_kL / sqrt_kx
+            R[4, 1] = -(1 / rho0) * (1 - cos_kL) / kx
+            R[4, 4] = 1
+            R[4, 5] = -L / (gamma0**2)
+            R[5, 5] = 1
+            
+            # Store the calculated data in the _xofields to be passed to the C struct
+            kwargs['r_matrix'] = R.flatten()
+            kwargs['length'] = length
+        
+        # Initialize the parent BeamElement class
+        super().__init__(**kwargs)
+# In your ElectrostaticBender class in elements.py
+
+    # ... (after your __init__ method) ...
+
+    # This method tells the survey command how to handle the geometry
+    def _propagate_survey(self, v, w, backtrack):
+        if backtrack:
+            raise NotImplementedError()
+
+        # We need the angle for the survey. Let's calculate it from the length and radius.
+        # Note: The sign determines the bend direction.
+        if self.radius != 0:
+            angle = -self.length / self.radius 
+        else:
+            angle = 0
+            
+        # Call the standard survey propagation function with our parameters
+        v, w = xt.survey.advance_element(v=v, w=w, length=self.length, angle=angle)
+        return v, w
