@@ -3641,7 +3641,7 @@ class ElectrostaticBender(xt.BeamElement):
             R[4, 0] = -(1 / rho0) * sin_kL / sqrt_kx
             R[4, 1] = -(1 / rho0) * (1 - cos_kL) / kx
             R[4, 4] = 1
-            R[4, 5] = -L / (gamma0**2)
+            R[4, 5] = L / (gamma0**2)
             R[5, 5] = 1
             
             # Store the calculated data in the _xofields to be passed to the C struct
